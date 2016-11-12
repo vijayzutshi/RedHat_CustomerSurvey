@@ -1,0 +1,352 @@
+---
+title: "Untitled"
+output: pdf_document
+---
+
+## Objective ## 
+## Red Hat Customer Survey
+The objective of this project is to classify customer potential based on a survey conducted by Red Hat. The database for this project has been downloaded from Kaggle. The main goal of this project it to predict the potential business value of a person based on an activity performed by that persion over a given time frame. The business value outcome of each person is defined by Yes/No for each unique activity. This is used to indicate if a person has finished an activity within a time frame.
+
+# Library
+```{r echo = FALSE}
+Sys.setenv(JAVA_HOME='C:\\Program Files\\Java\\jre1.8.0_91')
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(caret)
+library(kernlab)
+library(plotROC)
+library(ROCR)
+library(gridExtra)
+```
+
+# Load data
+```{r echo = FALSE}
+setwd("C:/Program Files/RStudio/kaggle/customersurvey_redhat")
+DataPeople <- read.csv("people.csv/people.csv", stringsAsFactors = FALSE)
+DataSampleSub <- read.csv("sample_submission.csv/sample_submission.csv")
+DataActTrain <- read.csv("act_train.csv/act_train.csv", stringsAsFactors = FALSE)
+DataActTest <- read.csv("act_test.csv/act_test.csv", stringsAsFactors = FALSE)
+```
+
+
+# Cleaning and Prepare training data set
+```{r echo = FALSE}
+#DataPeople$date <- as.Date(DataPeople$date)
+#DataActTrain$date <- as.Date(DataActTrain$date)
+#DataActTest$date <- as.Date(DataActTest$date)
+#DataPeople$date <- format(DataPeople$date, "%Y%m%d")
+#DataActTrain$date <- format(DataActTrain$date, "%Y%m%d")
+#DataActTest$date <- format(DataActTest$date, "%Y%m%d")
+
+# First merge know characteristics with people with training activities dataset
+DataTrain <- merge(DataPeople, DataActTrain, by="people_id")
+DataTrain <- lapply(DataTrain, as.factor)
+DataTrain <- data.frame(DataTrain)
+DataTrain$char_38 <- as.numeric(DataTrain$char_38)
+# data_train <- data_train[,-c(1,5,42,43)]
+# Split the data in Type 1 and non Type 1 
+DataType1Trng <- subset(DataTrain, DataTrain$activity_category == "type 1")
+ZeroType1 <- nearZeroVar(DataType1Trng)
+DataType1Trng <- DataType1Trng[, -ZeroType1]
+# Non type 1 data
+DataNonType1Trng <- subset(DataTrain, DataTrain$activity_category != "type 1")
+ZeroNonType1 <- nearZeroVar(DataNonType1Trng)
+DataNonType1Trng <- DataNonType1Trng[, -ZeroNonType1]
+```
+
+# Analysis 1
+# Cleaning and Prepare testing data set
+```{r echo = FALSE}
+DataTest <- merge(DataPeople, DataActTest, by="people_id")
+DataTest <- lapply(DataTest, as.factor)
+DataTest <- data.frame(DataTest)
+DataTest$char_38 <- as.numeric(DataTest$char_38)
+# Split testing set in type 1 activity
+DataType1Test <- subset(DataTest, DataTest$activity_category == "type 1")
+ZeroType1Test <- nearZeroVar(DataType1Test)
+DataType1Test <- DataType1Test[, -ZeroType1Test]
+# Non type 1 data
+DataNonType1Test <- subset(DataTest, DataTest$activity_category != "type 1")
+ZeroNonType1Test <- nearZeroVar(DataNonType1Test)
+DataNonType1Test <- DataNonType1Test[, -ZeroNonType1Test]
+```
+
+
+# Split data in traing and testing sets for Type 1 activity 
+```{r echo = FALSE}
+inTrain <- createDataPartition(y = DataType1Trng$outcome, p = 0.5, list = FALSE)
+training <- DataType1Trng[inTrain, ]
+testing <- DataType1Trng[-inTrain, ]
+```
+
+# Prediction with Regression for Type 1 activity
+```{r echo = FALSE}
+set.seed(123)
+TrainingFit <- training %>%
+                group_by(people_id) %>%
+                summarise(outcome = length(outcome))
+TrainingFit <- arrange(TrainingFit, desc(outcome))
+SampleTrainingFit <- head(TrainingFit, 10)
+TrainingFitLM <- TrainingFit
+ggplot(SampleTrainingFit, aes(x = people_id, y = outcome, fill = people_id)) +
+      geom_bar(stat = "identity") + coord_flip() +
+      ylab("Outcome") + xlab("People Id's") +
+      ggtitle("Top 10 Rating of people who performed Type 1 Activity")
+# Get people_id and outcome also summarised for the testing data
+TestingFit <- testing %>%
+                group_by(people_id) %>%
+                summarise(outcome = length(outcome))
+TestingFit <- arrange(TestingFit, desc(outcome))
+TestingFitLM <- TestingFit
+```
+
+# Fit a linear model for Type 1 Activity
+```{r echo = FALSE}
+TrainingFitLM <- lapply(TrainingFitLM, as.numeric) 
+TestingFitLM <- lapply(TestingFitLM, as.numeric)
+lm1 <- lm(people_id ~ outcome, data = TrainingFitLM)
+lm1
+```
+
+# Model Fit for Type 1 Activity
+```{r echo = FALSE}
+plot(TrainingFitLM$outcome, TrainingFitLM$people_id, type = "b", pch = 19)
+lines(TrainingFitLM$outcome, lm1$fitted.values, lwd = 3)
+```
+
+# Predict a new value for Type 1 Activity
+```{r echo = FALSE}
+prediction <- predict(lm1, newdata = TestingFit)
+```
+
+# Plot predictions - Testing and Training for Type 1 Activity
+```{r echo = FALSE}
+par(mfrow = c(1,2))
+plot(TrainingFitLM$outcome, TrainingFitLM$people_id, pch = 19, col = "blue",
+     xlab = "Outcome", ylab = "People Id's",
+     main = "Training Data Set\nType 1 Activity")
+lines(TrainingFitLM$outcome, predict(lm1), lwd = 3, col = "red")
+plot(TestingFit$outcome, TestingFit$people_id, pch = 19, col = "blue",
+     xlab = "Outcome", ylab = "People Id's",
+     main = "Testing Data Set\nType 1 Activity")
+lines(TestingFit$outcome, prediction, lwd = 3, col = "red")
+```
+
+# Calculate Traing and Testing data set errors for Type 1 Activity
+```{r echo = FALSE}
+# calculate RMSE on training data
+sqrt(sum((lm1$fitted.values - TrainingFitLM$people_id)^2))
+# calculate RMSE on testing data
+sqrt(sum((predict(lm1, newdata = TestingFitLM) - TestingFitLM$people_id)^2))
+```
+
+# Split data in traing and testing sets for Non Type 1 activity 
+```{r echo = FALSE}
+inTrainNonType1 <- createDataPartition(y = DataNonType1Trng$outcome, p = 0.5, list = FALSE)
+trainingNonType1 <- DataNonType1Trng[inTrainNonType1, ]
+testingNonType1 <- DataNonType1Trng[-inTrainNonType1, ]
+```
+
+# Predict with regression for non Type 1 Activity
+```{r echo = FALSE}
+set.seed(123)
+TrainingFitNonType1 <- trainingNonType1 %>%
+                group_by(people_id) %>%
+                summarise(outcome = length(outcome))
+TrainingFitNonType1 <- arrange(TrainingFitNonType1, desc(outcome))
+SampleTrainingFitNonType1 <- head(TrainingFitNonType1, 10)
+TrainingFitNonType1LM <- TrainingFitNonType1
+ggplot(SampleTrainingFitNonType1, aes(x = people_id, y = outcome, fill = people_id)) +
+      geom_bar(stat = "identity") + coord_flip() +
+      ylab("Outcome") + xlab("People Id's") +
+      ggtitle("Top 10 Rating of people who performed Non Type 1 Activity")
+# Get people_id and outcome also summarised for the testing data
+TestingFitNonType1 <- testingNonType1 %>%
+                group_by(people_id) %>%
+                summarise(outcome = length(outcome))
+TestingFitNonType1 <- arrange(TestingFitNonType1, desc(outcome))
+TestingFitNonType1LM <- TestingFitNonType1
+```
+
+# Fit a linear model for non Type 1 Activity
+```{r echo = FALSE}
+TrainingFitNonType1LM <- lapply(TrainingFitNonType1LM, as.numeric) 
+TestingFitNonType1LM <- lapply(TestingFitNonType1LM, as.numeric)
+lm2 <- lm(people_id ~ outcome, data = TrainingFitNonType1LM)
+lm2
+```
+
+# Predict a new value for non Type 1 Activity
+```{r echo = FALSE}
+predictionNonType1 <- predict(lm2, newdata = TestingFitNonType1)
+```
+
+# Plot prediction - testing and traing for non Type 1 activity
+```{r echo = FALSE}
+par(mfrow = c(1,2))
+plot(TrainingFitNonType1LM$outcome, TrainingFitNonType1LM$people_id, pch = 19, col = "blue",
+     xlab = "Outcome", ylab = "People Id's",
+     main = "Training Data Set\nNon Type 1 Activity")
+lines(TrainingFitNonType1LM$outcome, predict(lm2), lwd = 3, col = "red")
+plot(TestingFitNonType1$outcome, TestingFitNonType1$people_id, pch = 19, col = "blue",
+     xlab = "Outcome", ylab = "People Id's",
+     main = "Testing Data Set\nNon Type 1 Activity")
+lines(TestingFitNonType1$outcome, predictionNonType1, lwd = 3, col = "red")
+```
+
+# Calculate training and testing data set errors for non Type 1 activity
+```{r echo = FALSE}
+# calculate RMSE on training data for non type 1 activity
+sqrt(sum((lm2$fitted.values - TrainingFitNonType1LM$people_id)^2))
+# calculate RMSE on testing data for non type 1 activity
+sqrt(sum((predict(lm2, newdata = TestingFitNonType1LM) - TestingFitNonType1LM$people_id)^2))
+```
+
+
+# Analysis 2
+```{r echo = FALSE}
+# bind both training and testing data sets
+DataActTest$outcome <- 0
+DataActMerge <- rbind(DataActTrain, DataActTest, by = "people_id", fill = F)
+# merge this with people data set
+DataActPeoMerge <- merge(DataActMerge, DataPeople, by = "people_id")
+DataActPeoMerge <- lapply(DataActPeoMerge, as.factor)
+DataActPeoMerge <- data.frame(DataActPeoMerge)
+DataActPeoMerge$outcome <- as.numeric(DataActPeoMerge$outcome)
+DataActPeoMerge$char_38 <- as.numeric(DataActPeoMerge$char_38)
+# count the people id 
+d1 <- DataActPeoMerge %>%
+        group_by(people_id) %>%
+        summarise(peopleid_count = length(people_id))
+d1 <- arrange(d1, desc(peopleid_count))
+d1 <- head(d1, 10)
+ggplot(d1, aes(x = people_id, y = peopleid_count)) + geom_bar(stat = "identity") +
+        coord_flip() + xlab("People id count") + ylab("People ID") +
+        ggtitle("Top 10 Count of People ID who performed\nvarious activities")
+# count of all activity category
+d2 <- aggregate(DataActPeoMerge[, 4], by = list(act_category = 
+                                           DataActPeoMerge$activity_category), length)
+ggplot(d2, aes(x = act_category, y = x/10)) + geom_bar(stat = "identity") +
+        xlab("Activity Types") + ylab("Count per activity type ") +
+        ggtitle("Activity Categories and their total count")
+# count total number of groups under group_1
+d3 <- aggregate(DataActPeoMerge[, 17], by = list(group = 
+                                           DataActPeoMerge$group_1), length)
+d3 <- arrange(d3, desc(x))
+d3 <- head(d3, 10)
+ggplot(d3, aes(x = group, y = x)) + geom_bar(stat = "identity") + coord_flip() +
+        xlab("Groups") + ylab("Count per each group") +
+        ggtitle("Top 10 groups and their count")
+
+# get the count of activity category performed by Char_1.x 
+d4 <- aggregate(DataActPeoMerge[, 5], by = list(act_category = DataActPeoMerge$char_1.x),
+                                                length)
+d4[d4 ==""] <- NA
+d4 <- na.omit(d4)
+d4 <- arrange(d4, desc(x))
+d4 <- head(d4, 5)
+p1 <- ggplot(d4, aes(x = act_category, y = x)) + geom_bar(stat = "identity") +
+        xlab("Activity Category") + ylab("Count per activity category ") +
+        ggtitle("Top 5 Activity Categories for Char_1.x") +
+        theme(text = element_text(size=8))
+# get the count of activity category performed by Char_2.x 
+d5 <- aggregate(DataActPeoMerge[, 6], by = list(act_category = DataActPeoMerge$char_2.x),
+                                                length)
+d5[d5 ==""] <- NA
+d5 <- na.omit(d5)
+d5 <- arrange(d5, desc(x))
+d5 <- head(d5, 5)
+p2 <- ggplot(d5, aes(x = act_category, y = x)) + geom_bar(stat = "identity") +
+        xlab("Activity Category") + ylab("Count per activity category ") +
+        ggtitle("Top 5 Activity Categories for Char_2.x") +
+        theme(text = element_text(size=8))
+# get the count of activity category performed by Char_3.x 
+d6 <- aggregate(DataActPeoMerge[, 7], by = list(act_category = DataActPeoMerge$char_3.x),
+                                                length)
+d6[d6 ==""] <- NA
+d6 <- na.omit(d6)
+d6 <- arrange(d6, desc(x))
+d6 <- head(d6, 5)
+p3 <- ggplot(d6, aes(x = act_category, y = x)) + geom_bar(stat = "identity") +
+        xlab("Activity Category") + ylab("Count per activity category ") +
+        ggtitle("Top 5 Activity Categories for Char_3.x") +
+        theme(text = element_text(size=8))
+# get the count of activity category performed by Char_4.x 
+d7 <- aggregate(DataActPeoMerge[, 8], by = list(act_category = DataActPeoMerge$char_4.x),
+                                                length)
+d7[d7 ==""] <- NA
+d7 <- na.omit(d7)
+d7 <- arrange(d7, desc(x))
+d7 <- head(d7, 5)
+p4 <- ggplot(d7, aes(x = act_category, y = x)) + geom_bar(stat = "identity") +
+        xlab("Activity Category") + ylab("Count per activity category ") +
+        ggtitle("Top 5 Activity Categories for Char_4.x") +
+        theme(text = element_text(size=8))
+# plot 4 graphs as one side by side
+grid.arrange(p1, p2, p3, p4, ncol=2, nrow =2)
+# Plot outcome for char1.x, char2.x, char3.x, char4.x
+DataActPeoMerge %>% 
+filter(char_1.x != "") %>% 
+ggplot(aes(x = outcome, fill = char_1.x)) +
+geom_bar(width = 0.6, position = "fill") +
+ggtitle("Outcome for char_1.x")
+        
+DataActPeoMerge %>% 
+filter(char_2.x != "") %>% 
+ggplot(aes(x = outcome, fill = char_2.x)) +
+geom_bar(width = 0.6, position = "fill") +
+ggtitle("Outcome for char_2.x")
+
+DataActPeoMerge %>% 
+filter(char_3.x != "") %>% 
+ggplot(aes(x = outcome, fill = char_3.x)) +
+geom_bar(width = 0.6, position = "fill") +
+ggtitle("Outcome for char_3.x")
+
+DataActPeoMerge %>% 
+filter(char_4.x != "") %>% 
+ggplot(aes(x = outcome, fill = char_4.x)) +
+geom_bar(width = 0.6, position = "fill") +
+ggtitle("Outcome for char_4.x")
+
+# plot distribution of char_38 because of its all numeric values        
+DataActPeoMerge %>% 
+ggplot(aes(x = char_38)) +
+geom_bar() +
+ggtitle("Distribution of char_38")
+
+DataActPeoMerge %>% 
+ggplot(aes(x = char_38, fill = as.factor(outcome))) +
+geom_bar() + facet_wrap(~ outcome) +
+ggtitle("Distribution of char_38")
+```
+
+
+# Receiver Operating Characteristics
+```{r echo = FALSE, warning=FALSE, message=FALSE}
+set.seed(123)
+samp <- head(DataActPeoMerge, 5000)
+for (i in 1:nrow(samp)){
+      if (samp[i, 15] > 1) {
+       samp[i, 15] <- 0
+     }
+  next
+}
+
+ROCFit <- glm(outcome ~ char_38, family = "binomial", data = samp)
+samp$score <- predict.glm(ROCFit, type = "response")
+pred <- prediction(samp$score, samp$outcome)
+pref <- performance(pred, "tpr", "fpr")
+auc <- performance(pred, "auc")
+plot(pref, lwd = 3, colorize = T, print.cutoffs.at=seq(0,1,by=0.1)) + 
+      title("char_38 ROC curve for people with only 0/1") 
+text(1,0.15,labels=paste("AUC = ",round(auc@y.values[[1]],digits=3),sep=""),adj=1)
+abline( a= 0, b = 1, col = "red")
+```
+
+
+# Conclusion #
+
+The ROC curve for char_38 was plotted with a sample size of 5000 records from the combined data set comprising of people, act_train and act_test. The AUC value comes to 0.805 which shows that the prediction is correct as it is very near to AUC value of 1. 
+
